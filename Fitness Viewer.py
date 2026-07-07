@@ -2167,7 +2167,7 @@ class TagPanelWidget(QWidget):
 
         self._sys_btns = {}
 
-        # --- Ligne pour "Non sauvegardés", "Sauvegardés", "Tous" (33% chacun) ---
+        # --- Ligne pour "Tous" seulement ---
         row_backup = QHBoxLayout()
         row_backup.setSpacing(4)
         # Bouton décoratif avec icône "film" (non cliquable)
@@ -2202,25 +2202,6 @@ class TagPanelWidget(QWidget):
         btn_film_icon.leaveEvent = _film_icon_leave
         btn_film_icon.setToolTip("")   # désactive le tooltip natif        
         row_backup.addWidget(btn_film_icon, 1)
-
-        btn_none = QPushButton("Non sauvegardés")
-
-        btn_none.setCheckable(True)
-        btn_none.setChecked(False)
-        btn_none.setStyleSheet(self._filter_button_style("#444", "#5a5a5a", "#3a3a3a"))
-        btn_none.clicked.connect(lambda checked: self._on_system_filter("none"))
-        btn_none.setToolTip("")
-        self._sys_btns["none"] = btn_none
-        row_backup.addWidget(btn_none, 1)
-
-        btn_backed = QPushButton("Sauvegardés")
-        btn_backed.setCheckable(True)
-        btn_backed.setChecked(False)
-        btn_backed.setStyleSheet(self._filter_button_style("#444", "#5a5a5a", "#3a3a3a"))
-        btn_backed.clicked.connect(lambda checked: self._on_system_filter("backed"))
-        btn_backed.setToolTip("")
-        self._sys_btns["backed"] = btn_backed
-        row_backup.addWidget(btn_backed, 1)
 
         # Bouton "Tous" (all)
         btn_all = QPushButton("Tous")
