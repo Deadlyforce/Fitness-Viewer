@@ -31,6 +31,7 @@ class Config:
             "thumbnail_size": 200,
             "preview_resolution": "426x240",
             "volume": 50,
+            "vertical_mode": False,
             "play_on_hover": True,
             "columns": 4,
             "last_folder": "",
@@ -57,6 +58,7 @@ class Config:
             if os.path.exists(Config.CONFIG_FILE):
                 with open(Config.CONFIG_FILE, 'r') as f:
                     loaded = json.load(f)
+                    print(f"[DEBUG LOAD] Contenu du fichier chargé : {loaded}")
                     default_config.update(loaded)
         except:
             pass
@@ -69,6 +71,7 @@ class Config:
         try:
             with open(Config.CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=4)
+            print(f"[DEBUG SAVE] Configuration sauvegardée : {config}")
             return True
         except:
             return False
@@ -359,6 +362,8 @@ class VideoThumbnailContainer(QWidget):
         # /!\ NOTE: Utilise bien la version asynchrone de VideoThumbnail ici
         self.thumbnail = VideoThumbnail(video_path, thumbnail_size, parent_viewer)
         layout.addWidget(self.thumbnail)
+        # Initialiser l'arrondi des coins inférieurs en fonction de la visibilité du bouton
+        self.thumbnail.set_bottom_rounded(not parent_viewer.show_quick_copy_buttons)
 
         count = parent_viewer._get_copy_count(self.video_path)
         max_count = 0
@@ -537,6 +542,8 @@ class VideoThumbnailContainer(QWidget):
 
     def set_quick_copy_visible(self, visible):
         self.quick_copy_btn.setVisible(visible)
+        # Mettre à jour l'arrondi des coins inférieurs : si bouton masqué, arrondi
+        self.thumbnail.set_bottom_rounded(not visible)
 
     # NOUVEAU : C'est le conteneur qui intercepte et applique la logique globale de l'application !
     def mousePressEvent(self, event):
@@ -664,6 +671,7 @@ class VideoThumbnail(QLabel):
         self.is_selected = False
         self.drag_start_position = None
         self._tooltip_text = ""
+        self.bottom_rounded = False  # Par défaut, coins inférieurs plats
 
         self.update_style()
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -682,18 +690,27 @@ class VideoThumbnail(QLabel):
         
     def update_style(self):
         border_color = "#0078d4" if self.is_selected else "#555"
+        if self.bottom_rounded:
+            bottom_radius = "5px"
+        else:
+            bottom_radius = "0px"
         self.setStyleSheet(f"""
             QLabel {{
                 border: 1px solid {border_color};
                 border-top-left-radius: 5px;
                 border-top-right-radius: 5px;
-                border-bottom-left-radius: 0px;
-                border-bottom-right-radius: 0px;
+                border-bottom-left-radius: {bottom_radius};
+                border-bottom-right-radius: {bottom_radius};
                 padding: 5px;
                 background-color: #2b2b2b;
             }}
             QLabel:hover {{ border: 1px solid #1084d8; }}
         """)
+
+    def set_bottom_rounded(self, rounded):
+        """Définit si les coins inférieurs sont arrondis."""
+        self.bottom_rounded = rounded
+        self.update_style()
 
     def start_thumbnail_loading(self):
         self.setText("⌛")
@@ -3051,6 +3068,14 @@ class VideoViewer(QMainWindow):
         self.management_mode = False
 
         self.config = Config.load()
+        print(f"[DEBUG INIT] self.config chargé = {self.config}")
+        self.vertical_mode = self.config.get("vertical_mode", False)
+        print(f"[DEBUG 1] vertical_mode CHARGÉ depuis config = {self.vertical_mode}")
+
+        # --- Résolutions disponibles ---
+        self.horizontal_resolutions = ["426x240", "640x360", "854x480"]
+        self.vertical_resolutions = ["240x426", "360x640", "480x854"]
+
         self.thumbnail_size = self.config["thumbnail_size"]
         self.preview_resolution = self.config["preview_resolution"]
         self.volume = self.config["volume"]
@@ -3101,6 +3126,7 @@ class VideoViewer(QMainWindow):
         
         self.parse_preview_resolution()        
         self.init_ui()
+        print(f"[DEBUG 2] vertical_mode APRÈS init_ui = {self.vertical_mode}")
         self.setup_shortcuts()
 
         # Restaurer le mode d'exploration sauvegardé
@@ -3114,10 +3140,44 @@ class VideoViewer(QMainWindow):
         # -- Event filter global pour le drag de checkboxes ----------------
         QApplication.instance().installEventFilter(self)
 
-        # Synchroniser le combo de vue sans déclencher display_videos
-        # self.view_combo.blockSignals(True)
-        # self.view_combo.setCurrentIndex(0 if self.view_mode == "thumbnails" else 1)
-        # self.view_combo.blockSignals(False)
+        # --- Initialisation du combo résolution en fonction de vertical_mode ---
+        if hasattr(self, 'preview_res_combo'):
+            self.preview_res_combo.blockSignals(True)
+            self.preview_res_combo.clear()
+            if self.vertical_mode:
+                self.preview_res_combo.addItems(self.vertical_resolutions)
+            else:
+                self.preview_res_combo.addItems(self.horizontal_resolutions)
+
+            # S'assurer que preview_resolution est valide pour le mode actuel
+            if self.vertical_mode and self.preview_resolution not in self.vertical_resolutions:
+                parts = self.preview_resolution.split('x')
+                if len(parts) == 2:
+                    inverted = f"{parts[1]}x{parts[0]}"
+                    if inverted in self.vertical_resolutions:
+                        self.preview_resolution = inverted
+                    else:
+                        self.preview_resolution = self.vertical_resolutions[0]
+                else:
+                    self.preview_resolution = self.vertical_resolutions[0]
+            elif not self.vertical_mode and self.preview_resolution not in self.horizontal_resolutions:
+                parts = self.preview_resolution.split('x')
+                if len(parts) == 2:
+                    inverted = f"{parts[1]}x{parts[0]}"
+                    if inverted in self.horizontal_resolutions:
+                        self.preview_resolution = inverted
+                    else:
+                        self.preview_resolution = self.horizontal_resolutions[0]
+                else:
+                    self.preview_resolution = self.horizontal_resolutions[0]
+
+            self.preview_res_combo.setCurrentText(self.preview_resolution)
+            self.preview_res_combo.blockSignals(False)
+
+            # Mettre à jour le bouton pour qu'il soit cohérent
+            if hasattr(self, 'btn_vertical'):
+                self.btn_vertical.setChecked(self.vertical_mode)
+                self.btn_vertical.setText("↕ Paysage" if self.vertical_mode else "↕ Portrait")        
         
         active_lang = self.config.get("active_source", "fr")
         startup_folder = self.config.get(f"folder_{active_lang}", "") or self.config.get("last_folder", "")
@@ -3345,17 +3405,18 @@ class VideoViewer(QMainWindow):
             "view_mode": self.view_mode,
             "explorer_mode": self.explorer_mode,
             "last_tag_filter": self._tag_filter,
-            "last_valence_filter": self.tag_panel._valence_filter if hasattr(self, 'tag_panel') else "all",
+            "last_valence_filter": self.tag_panel._valence_filter if hasattr(self, 'tag_panel') else "all",            
             
             # --- AJOUT CRUCIAL : On empêche l'oubli de cette variable ---
             "last_target_browse_folder": self.config.get("last_target_browse_folder", ""),
             "folder_fr": self.config.get("folder_fr", ""),
             "folder_en": self.config.get("folder_en", ""),
             "active_source": self.config.get("active_source", "fr"),
+
+            "vertical_mode": self.vertical_mode,
         }
         self.config.update(config)
-        
-        # --- CORRECTION : On sauvegarde l'objet global complet ---
+        print(f"[DEBUG 5] _do_save : vertical_mode sauvegardé = {self.vertical_mode}")
         Config.save(self.config)
 
     def parse_preview_resolution(self):
@@ -4676,15 +4737,35 @@ class VideoViewer(QMainWindow):
         
         res_layout = QHBoxLayout()
         res_layout.addWidget(QLabel("📐 Résolution:"))
+
         self.preview_res_combo = QComboBox()
-        self.preview_res_combo.addItems(["426x240", "640x360", "854x480"])
-        resolutions = ["426x240", "640x360", "854x480"]
-        if self.preview_resolution in resolutions:
-            self.preview_res_combo.setCurrentIndex(resolutions.index(self.preview_resolution))
+        self.preview_res_combo.blockSignals(True)   # ← BLOQUE les signaux
+        
+        if self.vertical_mode:
+            self.preview_res_combo.addItems(self.vertical_resolutions)
         else:
-            self.preview_res_combo.setCurrentIndex(0)
+            self.preview_res_combo.addItems(self.horizontal_resolutions)
+        
+
+        # S'assurer que preview_resolution est valide pour le mode actuel
+        if self.vertical_mode and self.preview_resolution not in self.vertical_resolutions:
+            self.preview_resolution = self.vertical_resolutions[0]
+        elif not self.vertical_mode and self.preview_resolution not in self.horizontal_resolutions:
+            self.preview_resolution = self.horizontal_resolutions[0]
+
+        # Sélectionner la résolution actuelle sans déclencher de signal
+        self.preview_res_combo.setCurrentText(self.preview_resolution)
+        
+        self.preview_res_combo.blockSignals(False)  # ← RÉACTIVE les signaux
         self.preview_res_combo.currentTextChanged.connect(self.change_preview_resolution)
         res_layout.addWidget(self.preview_res_combo)
+
+        self.btn_vertical = QPushButton("↕ Portrait")
+        self.btn_vertical.setCheckable(True)
+        self.btn_vertical.setChecked(self.vertical_mode)
+        self.btn_vertical.setToolTip("Basculer entre résolutions horizontales et verticales")
+        self.btn_vertical.clicked.connect(self.toggle_vertical_mode)
+        res_layout.addWidget(self.btn_vertical)
         layout.addLayout(res_layout)
         
         vol_layout = QHBoxLayout()
@@ -4707,6 +4788,10 @@ class VideoViewer(QMainWindow):
         self.window_res_combo = QComboBox()
         self._win_presets = ["auto", "1920x1080", "1920x1200", "1280x720", "1280x800"]
         self._win_preset_labels = ["Auto", "1920×1080", "1920×1200", "1280×720", "1280×800"]
+
+        print(f"[DEBUG 3] Dans create_preview_controls : vertical_mode = {self.vertical_mode}")
+        print(f"[DEBUG 3] btn_vertical isChecked = {self.btn_vertical.isChecked()}")
+        print(f"[DEBUG 3] preview_res_combo currentText = {self.preview_res_combo.currentText()}")
 
         cur_w = self.config.get("window_width", 0)
         cur_h = self.config.get("window_height", 0)
@@ -5049,12 +5134,73 @@ class VideoViewer(QMainWindow):
         self._adjust_search_bar_width()
 
     def change_preview_resolution(self, resolution):
+        # --- Synchronisation du mode vertical ---
+        if resolution in self.vertical_resolutions:
+            self.vertical_mode = True
+            self.btn_vertical.setChecked(True)
+            self.btn_vertical.setText("↕ Paysage")
+        elif resolution in self.horizontal_resolutions:
+            self.vertical_mode = False
+            self.btn_vertical.setChecked(False)
+            self.btn_vertical.setText("↕ Portrait")
+        # --- Fin synchronisation ---
+
         self.preview_resolution = resolution
         self.parse_preview_resolution()
         self.video_widget.setMinimumSize(self.preview_width, self.preview_height)
         self.video_widget.setMaximumSize(self.preview_width + 50, self.preview_height + 50)
         self._recalc_layout()
         self.status_bar.set_info(f"Résolution preview : {resolution}")
+
+    def toggle_vertical_mode(self):
+        print(f"[DEBUG 4] toggle_vertical_mode appelé, avant bascule : vertical_mode = {self.vertical_mode}")
+        self.vertical_mode = self.btn_vertical.isChecked()
+        current_res = self.preview_resolution
+
+        # Bloquer les signaux pendant la mise à jour du combo
+        self.preview_res_combo.blockSignals(True)
+
+        # Fonction pour inverser une résolution "WxH" -> "HxW"
+        def invert_res(res):
+            parts = res.split('x')
+            if len(parts) == 2:
+                return f"{parts[1]}x{parts[0]}"
+            return res
+
+        # Déterminer la nouvelle résolution en inversant les dimensions
+        inverted = invert_res(current_res)
+        if self.vertical_mode:
+            # On veut une résolution verticale : la liste verticale doit contenir l'inversée
+            if inverted in self.vertical_resolutions:
+                new_res = inverted
+            else:
+                new_res = self.vertical_resolutions[0]
+        else:
+            # On veut une résolution horizontale
+            if inverted in self.horizontal_resolutions:
+                new_res = inverted
+            else:
+                new_res = self.horizontal_resolutions[0]
+
+        # Mettre à jour le combo
+        self.preview_res_combo.clear()
+        if self.vertical_mode:
+            self.preview_res_combo.addItems(self.vertical_resolutions)
+        else:
+            self.preview_res_combo.addItems(self.horizontal_resolutions)
+
+        # Sélectionner la nouvelle résolution
+        self.preview_res_combo.setCurrentText(new_res)
+        self.preview_resolution = new_res
+
+        self.preview_res_combo.blockSignals(False)
+
+        # Appliquer la résolution manuellement (met à jour le widget vidéo et le texte du bouton)
+        self.change_preview_resolution(new_res)
+        self.status_bar.set_info("Mode " + ("vertical" if self.vertical_mode else "horizontal") + " activé")
+
+        print(f"[DEBUG 4] toggle_vertical_mode terminé, après bascule : vertical_mode = {self.vertical_mode}")
+        print(f"[DEBUG 4] preview_res_combo currentText = {self.preview_res_combo.currentText()}")
             
     def load_videos_from_path(self, folder_path, include_subdirs=False, root_files_only=False):
         """Charge les vidéos d'un chemin — stocke la liste complète dans all_video_files (Optimisé v8.2 + Fix Tags)"""
@@ -7311,6 +7457,7 @@ class VideoViewer(QMainWindow):
 
     def save_settings(self):
         """Sauvegarde manuelle (bouton 💾) — appelle _do_save et confirme"""
+        print(f"[DEBUG 6] save_settings appelé, vertical_mode = {self.vertical_mode}")
         self._do_save()
         self.status_bar.set_success("Configuration complète sauvegardée avec succès !")
 
