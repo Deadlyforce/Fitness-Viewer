@@ -20,7 +20,7 @@
     "last_tag_filter": [
         [
             "system",
-            "untagged"
+            "all"
         ]
     ],
     "last_valence_filter": null,

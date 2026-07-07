@@ -71,7 +71,6 @@ class Config:
         try:
             with open(Config.CONFIG_FILE, 'w') as f:
                 json.dump(config, f, indent=4)
-            print(f"[DEBUG SAVE] Configuration sauvegardée : {config}")
             return True
         except:
             return False
@@ -396,8 +395,16 @@ class VideoThumbnailContainer(QWidget):
         self.backup_indicator.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.backup_indicator.hide()
         # ---------------------------------------------------------
+        
+        # Si c'est une image, masquer les badges
+        ext = os.path.splitext(video_path)[1].lower()
+        if ext in parent_viewer.image_extensions:
+            self.badge.hide()
+            self.norm_badge.hide()
+            self.backup_indicator.hide()     
 
         self._refresh_norm_badge()
+
 
         self.quick_copy_btn = QPushButton("⏶")
         self.quick_copy_btn.setToolTip("Copier vers la cible")
@@ -473,6 +480,9 @@ class VideoThumbnailContainer(QWidget):
             self.backup_indicator.setGeometry(current_x, thumb_h - nh - 5, bw, nh)
 
     def _refresh_norm_badge(self):
+        if os.path.splitext(self.video_path)[1].lower() in self.parent_viewer.image_extensions:
+            return
+        
         info = self.parent_viewer._get_norm_info(self.video_path)
         
         # 1. Rafraîchissement de la pastille de normalisation
@@ -526,6 +536,8 @@ class VideoThumbnailContainer(QWidget):
         super().resizeEvent(event)
         self._reposition_badge()
         self._reposition_norm_badge()
+        if hasattr(self, 'video_image_label'):
+            self.video_image_label.setGeometry(0, 0, self.video_widget.width(), self.video_widget.height())
 
     def refresh_badge(self, max_count=0):
         count = self.parent_viewer._get_copy_count(self.video_path)
@@ -682,6 +694,33 @@ class VideoThumbnail(QLabel):
         
         # Déclenchement asynchrone
         self.start_thumbnail_loading()
+
+        # Détecter si c'est une image
+        ext = os.path.splitext(video_path)[1].lower()
+        if ext in self.parent_viewer.image_extensions:
+            self._load_image()
+        else:
+            self.start_thumbnail_loading()
+
+    def _load_image(self):
+        """Charge et affiche une image directement."""
+        try:
+            pixmap = QPixmap(self.video_path)
+            if pixmap.isNull():
+                self.setText("❌")
+                self._tooltip_text = "Image invalide"
+                return
+            box_w = self.thumbnail_size
+            box_h = int(self.thumbnail_size * 3 / 4)
+            scaled_pixmap = pixmap.scaled(box_w, box_h,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation)
+            self.setPixmap(scaled_pixmap)
+            self._tooltip_text = os.path.splitext(os.path.basename(self.video_path))[0]
+            self.loaded_signal.emit()
+        except Exception as e:
+            self.setText("⚠️")
+            self._tooltip_text = f"Erreur: {str(e)}"
 
     def _apply_fixed_size(self):
         w = self.thumbnail_size
@@ -1237,19 +1276,21 @@ class FolderTreeWidget(QTreeWidget):
 
         count = 0
         video_extensions = ('.mp4', '.avi', '.mkv', '.mov', '.wmv', '.flv', '.webm', '.m4v')
-        
+        image_extensions = tuple(self.image_extensions)
+        media_extensions = video_extensions + image_extensions
+
         try:
             if include_subdirs:
                 # Utilisation de os.walk (qui gère nativement scandir sous le capot)
                 for root, _, files in os.walk(path):
                     for file in files:
-                        if file.lower().endswith(video_extensions):
+                        if file.lower().endswith(media_extensions):
                             count += 1
             else:
                 # Optimisation directe avec os.scandir pour la racine seule
                 with os.scandir(path) as entries:
                     for entry in entries:
-                        if entry.is_file() and entry.name.lower().endswith(video_extensions):
+                        if entry.is_file() and entry.name.lower().endswith(media_extensions):
                             count += 1
         except Exception:
             pass
@@ -3068,13 +3109,13 @@ class VideoViewer(QMainWindow):
         self.management_mode = False
 
         self.config = Config.load()
-        print(f"[DEBUG INIT] self.config chargé = {self.config}")
         self.vertical_mode = self.config.get("vertical_mode", False)
-        print(f"[DEBUG 1] vertical_mode CHARGÉ depuis config = {self.vertical_mode}")
 
         # --- Résolutions disponibles ---
         self.horizontal_resolutions = ["426x240", "640x360", "854x480"]
         self.vertical_resolutions = ["240x426", "360x640", "480x854"]
+
+        self.image_extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp']
 
         self.thumbnail_size = self.config["thumbnail_size"]
         self.preview_resolution = self.config["preview_resolution"]
@@ -3126,7 +3167,6 @@ class VideoViewer(QMainWindow):
         
         self.parse_preview_resolution()        
         self.init_ui()
-        print(f"[DEBUG 2] vertical_mode APRÈS init_ui = {self.vertical_mode}")
         self.setup_shortcuts()
 
         # Restaurer le mode d'exploration sauvegardé
@@ -3416,7 +3456,6 @@ class VideoViewer(QMainWindow):
             "vertical_mode": self.vertical_mode,
         }
         self.config.update(config)
-        print(f"[DEBUG 5] _do_save : vertical_mode sauvegardé = {self.vertical_mode}")
         Config.save(self.config)
 
     def parse_preview_resolution(self):
@@ -3907,12 +3946,18 @@ class VideoViewer(QMainWindow):
         right_layout.addWidget(preview_label)
         
         self.video_widget = ClickableVideoWidget()
-        # self.video_widget.setAttribute(Qt.WidgetAttribute.WA_NativeWindow, True)
         self.video_widget.setMinimumSize(self.preview_width, self.preview_height)
         self.video_widget.setMaximumSize(self.preview_width + 50, self.preview_height + 50)
-        # self.video_widget.setStyleSheet("background-color: black;")
         self.video_widget.clicked.connect(self.toggle_play_pause)
         
+        self.video_image_label = QLabel(self.video_widget)
+        self.video_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_image_label.setStyleSheet("background-color: black; color: white;")
+        self.video_image_label.setVisible(False)
+        self.video_image_label.setGeometry(0, 0, self.video_widget.width(), self.video_widget.height())
+        # Forcer le label à rester derrière les autres widgets (mais devant le fond)
+        self.video_image_label.lower()
+
         # VLC : instance et lecteur
         self.vlc_instance = vlc.Instance("--no-plugins-cache")
         if self.vlc_instance is None:
@@ -4789,10 +4834,6 @@ class VideoViewer(QMainWindow):
         self._win_presets = ["auto", "1920x1080", "1920x1200", "1280x720", "1280x800"]
         self._win_preset_labels = ["Auto", "1920×1080", "1920×1200", "1280×720", "1280×800"]
 
-        print(f"[DEBUG 3] Dans create_preview_controls : vertical_mode = {self.vertical_mode}")
-        print(f"[DEBUG 3] btn_vertical isChecked = {self.btn_vertical.isChecked()}")
-        print(f"[DEBUG 3] preview_res_combo currentText = {self.preview_res_combo.currentText()}")
-
         cur_w = self.config.get("window_width", 0)
         cur_h = self.config.get("window_height", 0)
         cur_res = f"{cur_w}x{cur_h}" if cur_w and cur_h else "auto"
@@ -5123,6 +5164,7 @@ class VideoViewer(QMainWindow):
         ctrl_w = rw - self.RIGHT_PADDING
         self.preview_controls.setFixedWidth(ctrl_w)
         self.video_widget.setFixedWidth(ctrl_w)
+        self.video_image_label.setGeometry(0, 0, self.video_widget.width(), self.video_widget.height())
 
         screen_w = QApplication.primaryScreen().geometry().width()
         new_w = min(lw + cw + rw, screen_w - 40)
@@ -5149,11 +5191,11 @@ class VideoViewer(QMainWindow):
         self.parse_preview_resolution()
         self.video_widget.setMinimumSize(self.preview_width, self.preview_height)
         self.video_widget.setMaximumSize(self.preview_width + 50, self.preview_height + 50)
+        self.video_image_label.setGeometry(0, 0, self.video_widget.width(), self.video_widget.height())
         self._recalc_layout()
         self.status_bar.set_info(f"Résolution preview : {resolution}")
 
     def toggle_vertical_mode(self):
-        print(f"[DEBUG 4] toggle_vertical_mode appelé, avant bascule : vertical_mode = {self.vertical_mode}")
         self.vertical_mode = self.btn_vertical.isChecked()
         current_res = self.preview_resolution
 
@@ -5198,9 +5240,6 @@ class VideoViewer(QMainWindow):
         # Appliquer la résolution manuellement (met à jour le widget vidéo et le texte du bouton)
         self.change_preview_resolution(new_res)
         self.status_bar.set_info("Mode " + ("vertical" if self.vertical_mode else "horizontal") + " activé")
-
-        print(f"[DEBUG 4] toggle_vertical_mode terminé, après bascule : vertical_mode = {self.vertical_mode}")
-        print(f"[DEBUG 4] preview_res_combo currentText = {self.preview_res_combo.currentText()}")
             
     def load_videos_from_path(self, folder_path, include_subdirs=False, root_files_only=False):
         """Charge les vidéos d'un chemin — stocke la liste complète dans all_video_files (Optimisé v8.2 + Fix Tags)"""
@@ -5209,6 +5248,8 @@ class VideoViewer(QMainWindow):
             return
 
         video_extensions = ('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v')
+        image_extensions = tuple(self.image_extensions)  # on utilise la liste définie
+        media_extensions = video_extensions + image_extensions
         
         self.last_loaded_params = (folder_path, include_subdirs, root_files_only)
         self.config["last_active_folder"] = folder_path
@@ -5223,7 +5264,7 @@ class VideoViewer(QMainWindow):
             if root_files_only:
                 with os.scandir(folder_path) as entries:
                     for entry in entries:
-                        if entry.is_file() and entry.name.lower().endswith(video_extensions):
+                        if entry.is_file() and entry.name.lower().endswith(media_extensions):
                             found.append(entry.path)
                             
             elif include_subdirs:
@@ -5231,7 +5272,7 @@ class VideoViewer(QMainWindow):
                 for root, dirs, files in os.walk(folder_path):
                     dirs[:] = [d for d in dirs if not d.startswith('.')]
                     for file in files:
-                        if file.lower().endswith(video_extensions):
+                        if file.lower().endswith(media_extensions):
                             found.append(os.path.join(root, file))
                             
             else:
@@ -5441,7 +5482,9 @@ class VideoViewer(QMainWindow):
         # ... tout le code de création de l'en-tête reste identique ...
         self.content_layout.addWidget(header)
 
-        sorted_files = self._get_sorted_video_files()
+        all_files = self._get_sorted_video_files()
+        video_files = [p for p in all_files if os.path.splitext(p)[1].lower() not in self.image_extensions]
+        sorted_files = video_files
         use_lazy = (self.lazy_loading and len(sorted_files) > self.LAZY_THRESHOLD)
 
         def _append_row(video_path):
@@ -5542,7 +5585,32 @@ class VideoViewer(QMainWindow):
             row.set_checked(new_state)
             
     def play_preview(self, video_path):
-        """Lance la prévisualisation avec VLC."""
+        """Lance la prévisualisation (vidéo ou image)."""
+        ext = os.path.splitext(video_path)[1].lower()
+        if ext in self.image_extensions:
+            # Afficher l'image
+            self.vlc_player.stop()
+            # Rendre le label visible et le widget VLC transparent (ou caché)
+            self.video_image_label.setVisible(True)
+            self.video_widget.setVisible(True)  # ne pas cacher, sinon le label n'est pas visible
+            # Charger l'image
+            pixmap = QPixmap(video_path)
+            if not pixmap.isNull():
+                # Redimensionner en conservant le ratio
+                scaled = pixmap.scaled(self.video_widget.width(), self.video_widget.height(),
+                                       Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                self.video_image_label.setPixmap(scaled)
+                self.video_image_label.setStyleSheet("background-color: black;")
+            else:
+                self.video_image_label.setText("❌ Image invalide")
+                self.video_image_label.setStyleSheet("color: white; background-color: black; font-size: 20px;")
+            self.status_bar.set_info(f"Image : {os.path.basename(video_path)}")
+            return
+
+        # Sinon, c'est une vidéo
+        self.video_image_label.setVisible(False)
+        self.video_widget.setVisible(True)
         self.vlc_player.stop()
         media = self.vlc_instance.media_new(video_path)
         self.vlc_player.set_media(media)
@@ -6157,7 +6225,10 @@ class VideoViewer(QMainWindow):
             return
 
         checked_paths = {row.video_path for row in self.row_widgets if row.is_checked()}
+
         all_files = list(self._get_sorted_video_files())
+        # Filtrer pour ne garder que les vidéos
+        all_files = [p for p in all_files if os.path.splitext(p)[1].lower() not in self.image_extensions]
 
         if checked_paths:
             files_to_analyze = [p for p in all_files if p in checked_paths]
