@@ -58,7 +58,6 @@ class Config:
             if os.path.exists(Config.CONFIG_FILE):
                 with open(Config.CONFIG_FILE, 'r') as f:
                     loaded = json.load(f)
-                    print(f"[DEBUG LOAD] Contenu du fichier chargé : {loaded}")
                     default_config.update(loaded)
         except:
             pass
@@ -280,72 +279,6 @@ class StatusBar(QFrame):
         self.message_label.setStyleSheet("color: #aaaaaa; font-size: 12px;")
 
 
-class CopyCountBadge(QLabel):
-    """Pastille affichant le nombre de copies d'une vidéo"""
-
-    @staticmethod
-    def copy_count_color(count, max_count):
-        if max_count <= 0:
-            return "#2255cc"
-        ratio = min(count / max_count, 1.0)
-        if ratio < 0.25:
-            t = ratio / 0.25
-            r = int(34 + t * (0 - 34))
-            g = int(85 + t * (180 - 85))
-            b = int(204 + t * (220 - 204))
-        elif ratio < 0.5:
-            t = (ratio - 0.25) / 0.25
-            r = int(0 + t * (50 - 0))
-            g = int(180 + t * (200 - 180))
-            b = int(220 + t * (80 - 220))
-        elif ratio < 0.75:
-            t = (ratio - 0.5) / 0.25
-            r = int(50 + t * (255 - 50))
-            g = int(200 + t * (165 - 200))
-            b = int(80 + t * (0 - 80))
-        else:
-            t = (ratio - 0.75) / 0.25
-            r = 255
-            g = int(165 + t * (0 - 165))
-            b = 0
-        return f"#{r:02x}{g:02x}{b:02x}"
-
-    def __init__(self, count, max_count, parent=None):
-        super().__init__(str(count), parent)
-        self.count = count
-        self.max_count = max_count
-        self._update_appearance()
-
-    def _update_appearance(self):
-        color = self.copy_count_color(self.count, self.max_count)
-        digits = len(str(self.count))
-        if digits == 1:
-            min_w, pad_h, pad_v = 20, 4, 2
-        elif digits == 2:
-            min_w, pad_h, pad_v = 26, 5, 2
-        else:
-            min_w, pad_h, pad_v = 32, 6, 2
-        radius = 10
-        self.setStyleSheet(f"""
-            QLabel {{
-                background-color: {color};
-                color: white;
-                font-size: 10px;
-                font-weight: bold;
-                border-radius: {radius}px;
-                padding: {pad_v}px {pad_h}px;
-                min-width: {min_w}px;
-            }}
-        """)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    def update_count(self, count, max_count):
-        self.count = count
-        self.max_count = max_count
-        self.setText(str(count))
-        self._update_appearance()
-
-
 class VideoThumbnailContainer(QWidget):
     """Conteneur pour une vignette vidéo + bouton de copie rapide optionnel"""
     def __init__(self, video_path, thumbnail_size, parent_viewer):
@@ -363,12 +296,6 @@ class VideoThumbnailContainer(QWidget):
         layout.addWidget(self.thumbnail)
         # Initialiser l'arrondi des coins inférieurs en fonction de la visibilité du bouton
         self.thumbnail.set_bottom_rounded(not parent_viewer.show_quick_copy_buttons)
-
-        count = parent_viewer._get_copy_count(self.video_path)
-        max_count = 0
-        self.badge = CopyCountBadge(count, max_count, self.thumbnail)
-        self.badge.raise_()
-        self._reposition_badge()
 
         self.save_badge = None
 
@@ -396,15 +323,8 @@ class VideoThumbnailContainer(QWidget):
         self.backup_indicator.hide()
         # ---------------------------------------------------------
         
-        # Si c'est une image, masquer les badges
-        ext = os.path.splitext(video_path)[1].lower()
-        if ext in parent_viewer.image_extensions:
-            self.badge.hide()
-            self.norm_badge.hide()
-            self.backup_indicator.hide()     
 
         self._refresh_norm_badge()
-
 
         self.quick_copy_btn = QPushButton("⏶")
         self.quick_copy_btn.setToolTip("Copier vers la cible")
@@ -440,12 +360,6 @@ class VideoThumbnailContainer(QWidget):
 
         layout.addWidget(self.quick_copy_btn)
         self.quick_copy_btn.setVisible(parent_viewer.show_quick_copy_buttons)
-
-    def _reposition_badge(self):
-        self.badge.adjustSize()
-        bw = self.badge.sizeHint().width()
-        thumb_w = self.thumbnail_size
-        self.badge.move(thumb_w - bw - 5, 5)
 
     def _norm_badge_size(self):
         font = QFont()
@@ -534,15 +448,9 @@ class VideoThumbnailContainer(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reposition_badge()
         self._reposition_norm_badge()
         if hasattr(self, 'video_image_label'):
             self.video_image_label.setGeometry(0, 0, self.video_widget.width(), self.video_widget.height())
-
-    def refresh_badge(self, max_count=0):
-        count = self.parent_viewer._get_copy_count(self.video_path)
-        self.badge.update_count(count, max_count)
-        self._reposition_badge()
 
     def quick_copy(self):
         self.parent_viewer.deselect_all_thumbnails()
@@ -1718,75 +1626,6 @@ class FilmTreeWidget(QListWidget):
             paths = sorted(self._film_map[film])
             self.parent_viewer.load_video_list(paths, label=film)
 
-
-class UsageListWidget(QListWidget):
-    """Vue 'Top copies'"""
-
-    VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
-
-    def __init__(self, parent_viewer):
-        super().__init__()
-        self.parent_viewer = parent_viewer
-        self._usage_map = {}
-
-        self.setStyleSheet("""
-            QListWidget {
-                background-color: #2b2b2b;
-                color: white;
-                border: 1px solid #555;
-            }
-            QListWidget::item { padding: 4px 6px; border-bottom: 1px solid #3a3a3a; }
-            QListWidget::item:selected { background-color: #0078d4; }
-            QListWidget::item:hover { background-color: #3b3b3b; }
-        """)
-        self.itemClicked.connect(self.on_usage_clicked)
-
-    def load_usage(self, root_path):
-        self.clear()
-        self._usage_map = {}
-        VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
-
-        ds = self.parent_viewer._get_data_store()
-        if not ds:
-            return
-
-        for dirpath, _, files in os.walk(root_path):
-            for f in files:
-                if os.path.splitext(f)[1].lower() in VIDEO_EXTENSIONS:
-                    full_path = os.path.join(dirpath, f)
-                    count = ds.get_copy_count(full_path)
-                    self._usage_map.setdefault(count, []).append(full_path)
-
-        if not self._usage_map:
-            return
-
-        max_count = max(self._usage_map.keys())
-
-        for count in sorted(self._usage_map.keys(), reverse=True):
-            nb = len(self._usage_map[count])
-            color = CopyCountBadge.copy_count_color(count, max_count)
-
-            if count == 0:
-                label = f"  🔵  {count} copie  —  {nb} vidéo{'s' if nb > 1 else ''}"
-            elif count == 1:
-                label = f"  ●  {count} copie  —  {nb} vidéo{'s' if nb > 1 else ''}"
-            else:
-                label = f"  ●  {count} copies  —  {nb} vidéo{'s' if nb > 1 else ''}"
-
-            list_item = QListWidgetItem(label)
-            list_item.setData(Qt.ItemDataRole.UserRole, count)
-            from PyQt6.QtGui import QColor
-            list_item.setForeground(QColor(color))
-            self.addItem(list_item)
-
-    def on_usage_clicked(self, item):
-        count = item.data(Qt.ItemDataRole.UserRole)
-        if count is not None and count in self._usage_map:
-            paths = sorted(self._usage_map[count])
-            label = f"{'0 copie' if count == 0 else (str(count) + ' copie' if count == 1 else str(count) + ' copies')}"
-            self.parent_viewer.load_video_list(paths, label=label)
-
-
 class FolderDataStore:
     """
     Gestionnaire du fichier unique _videoviewer_data.json à la racine du dossier source.
@@ -2152,7 +1991,7 @@ class TagPanelWidget(QWidget):
         self._active_tags = []
         self._selected_tags_set = set()
         self._filter_counts = {"all": 0, "none": 0, "backed": 0, "untagged": 0}
-        self._valence_filter = "all"   # <-- initialisation anticipée
+        self._valence_filter = None   # Aucun filtre de valence par défaut
         self._setup_ui()
 
     def _setup_ui(self):
@@ -2546,12 +2385,6 @@ class TagPanelWidget(QWidget):
                 if data_store.get_tag_valence(tag) == valence_filter:
                     filtered_counts[tag] = count
             tag_counts = filtered_counts
-        elif valence_filter == "all":
-            filtered_counts = {}
-            for tag, count in tag_counts.items():
-                if data_store.get_tag_valence(tag) in ("positif", "negatif", "neutre"):
-                    filtered_counts[tag] = count
-            tag_counts = filtered_counts
         # ------------------------------------------------------------
 
         ascending = True
@@ -2617,6 +2450,9 @@ class TagPanelWidget(QWidget):
             self._tag_list.addItem(item)
             self._tag_list.setItemWidget(item, widget)
 
+        self._tag_list.repaint()
+        self._tag_list.update()
+
         # Mise à jour de l'ensemble de sélection
         self._selected_tags_set = prev_selected & set(tag_counts.keys())
         self._active_tags = [t for t in self._active_tags if t in self._selected_tags_set]
@@ -2649,6 +2485,11 @@ class TagPanelWidget(QWidget):
         # --- RESTAURATION DE LA POSITION DE DÉFILEMENT ---
         scrollbar.setValue(scroll_value)
         # ------------------------------------------------
+
+        # Mettre à jour l'état des boutons de valence
+        if hasattr(self, '_valence_btns'):
+            for key, btn in self._valence_btns.items():
+                btn.setChecked(key == self._valence_filter if self._valence_filter is not None else False)
 
     def refresh_panel_only(self, data_store, backup_dests=None):
         """v7.2 : Rafraîchit le panneau de tags SANS toucher à l'affichage des vignettes.
@@ -2788,30 +2629,25 @@ class TagPanelWidget(QWidget):
             item.setSelected(False)
 
     def _handle_tag_click(self, item):
-        # Si un filtre de valence est actif, on le CONSERVE (ne pas réinitialiser).
-        # On ne réinitialise la valence et le filtre système que si aucun filtre de
-        # valence n'est en cours.
-        if self._valence_filter is None:
-            # Réinitialiser le filtre système à "all"
-            self._active_system = "all"
-            for k, btn in self._sys_btns.items():
-                btn.setChecked(k == "all")
-        # Si _valence_filter est actif, _active_system et les boutons système restent
-        # tels quels (ils sont déjà None / décochés depuis _set_valence_filter).
-
+        # Réinitialiser les filtres de valence et système
+        self._valence_filter = None
+        if hasattr(self, '_valence_btns'):
+            for btn in self._valence_btns.values():
+                btn.setChecked(False)
+        self._active_system = "all"
+        for k, btn in self._sys_btns.items():
+            btn.setChecked(k == "all")
+        # Vider la sélection précédente
+        self._tag_list.clearSelection()
+        self._selected_tags_set.clear()
+        # Sélectionner le tag cliqué
         tag = item.data(Qt.ItemDataRole.UserRole)
         if tag is None:
             return
-
-        if tag in self._selected_tags_set:
-            return
-
-        self._tag_list.clearSelection()
-        self._selected_tags_set.clear()
         item.setSelected(True)
         self._selected_tags_set.add(tag)
         self._active_tags = [tag]
-
+        # Émettre le filtre
         self.tag_filter_changed.emit(self._get_current_filter())
         self._update_selection_bars()
 
@@ -2940,31 +2776,40 @@ class TagPanelWidget(QWidget):
             self.parent_viewer.status_bar.set_success(f"Tag « {tag} » créé (0 vidéos)")
 
     def _set_valence_filter(self, valence):
-        """Applique le filtre de valence, exclusif (désactive les autres filtres)."""
-        if valence not in ("all", "positif", "negatif", "neutre"):
+        if valence == "all":
+            self._valence_filter = None
+            # Décocher tous les boutons de valence
+            if hasattr(self, '_valence_btns'):
+                for btn in self._valence_btns.values():
+                    btn.setChecked(False)
+            # Réinitialiser le filtre système à "all"
+            self._active_system = "all"
+            for k, btn in self._sys_btns.items():
+                btn.setChecked(k == "all")
+            # Effacer la sélection de tags
+            self._selected_tags_set.clear()
+            self._active_tags = []
+            self._tag_list.clearSelection()
+        elif valence in ("positif", "negatif", "neutre"):
+            self._valence_filter = valence
+            # Décocher les filtres système
+            self._active_system = None
+            for k, btn in self._sys_btns.items():
+                btn.setChecked(False)
+            # Effacer la sélection de tags
+            self._selected_tags_set.clear()
+            self._active_tags = []
+            self._tag_list.clearSelection()
+            # Cocher le bon bouton de valence
+            if hasattr(self, '_valence_btns'):
+                for key, btn in self._valence_btns.items():
+                    btn.setChecked(key == valence)
+        else:
             return
-        self._valence_filter = valence
-
-        # Décocher tous les filtres système (plus aucun filtre système actif)
-        self._active_system = None
-        for k, btn in self._sys_btns.items():
-            btn.setChecked(False)
-
-        # Effacer toute sélection de tags
-        self._selected_tags_set.clear()
-        self._active_tags = []
-        self._tag_list.clearSelection()
-
-        # Mettre à jour visuellement les boutons de valence
-        if hasattr(self, '_valence_btns'):
-            for key, btn in self._valence_btns.items():
-                btn.setChecked(key == valence)
-
-        # Recharger le catalogue complet pour ne pas restreindre
+        # Recharger le catalogue complet
         pv = self.parent_viewer
         source = pv.full_catalog if pv.full_catalog else pv.all_video_files
         pv.all_video_files = list(source)
-
         # Émettre le nouveau filtre
         self.tag_filter_changed.emit(self._get_current_filter())
 
@@ -3116,7 +2961,6 @@ class VideoViewer(QMainWindow):
 
         # Le compteur de copies est désormais dans le FolderDataStore.
         self.copy_counts = {}   # gardé pour compatibilité, mais plus alimenté par la config.
-        self.sort_copies_order = None
         self.tooltip_font_size = self.config.get("tooltip_font_size", 100)
         # Sécurité : borner entre 50% et 200%
         if not (50 <= self.tooltip_font_size <= 250):
@@ -3150,9 +2994,15 @@ class VideoViewer(QMainWindow):
         self.init_ui()
         self.setup_shortcuts()
 
-        # Restaurer le mode d'exploration sauvegardé
+        # --- Combo fantôme pour la gestion des modes (caché) ---
+        self.explorer_mode_combo = QComboBox()
+        self.explorer_mode_combo.addItems(["classic", "tags", "byfilm"])   # plus de "usage"
+        self.explorer_mode_combo.setVisible(False)
+        self.explorer_mode_combo.currentIndexChanged.connect(self._on_explorer_mode_changed)
+
+        # Restaurer le mode sauvegardé
         saved_explorer = self.config.get("explorer_mode", "classic")
-        mode_index = {"classic": 0, "tags": 1, "byfilm": 2, "usage": 3}.get(saved_explorer, 0)
+        mode_index = {"classic": 0, "tags": 1, "byfilm": 2}.get(saved_explorer, 0)
         self.explorer_mode_combo.setCurrentIndex(mode_index)
         self.explorer_mode = saved_explorer
         self._apply_explorer_mode_visibility()
@@ -3336,7 +3186,6 @@ class VideoViewer(QMainWindow):
         self.folder_tree.setVisible(self.explorer_mode == "classic")
         self.tag_panel.setVisible(self.explorer_mode == "tags")
         self.film_tree.setVisible(self.explorer_mode == "byfilm")
-        self.usage_tree.setVisible(self.explorer_mode == "usage")
 
 
     def _adjust_search_bar_width(self):
@@ -3637,12 +3486,6 @@ class VideoViewer(QMainWindow):
         explorer_row = QHBoxLayout()
         explorer_row.setSpacing(4)
 
-        # ComboBox fantôme (non affiché) — conserve la compatibilité des appels setCurrentIndex
-        self.explorer_mode_combo = QComboBox()
-        self.explorer_mode_combo.addItems(["classic", "tags", "byfilm", "usage"])
-        self.explorer_mode_combo.setVisible(False)
-        self.explorer_mode_combo.currentIndexChanged.connect(self._on_explorer_mode_changed)
-
         # Bouton icône "œil" — non cliquable, décoratif
         btn_eye = QPushButton()
         btn_eye.setFixedSize(28, 28)
@@ -3681,7 +3524,6 @@ class VideoViewer(QMainWindow):
             ("Classique", 0),
             ("Tags",      1),
             ("Films",     2),
-            ("Top copies",3),
         ]
         self._explorer_btns = {}
         btn_style_active   = """QPushButton { 
@@ -3767,11 +3609,7 @@ class VideoViewer(QMainWindow):
 
         self.film_tree = FilmTreeWidget(self)
         self.film_tree.setVisible(False)
-        left_layout.addWidget(self.film_tree)
-
-        self.usage_tree = UsageListWidget(self)
-        self.usage_tree.setVisible(False)
-        left_layout.addWidget(self.usage_tree)
+        left_layout.addWidget(self.film_tree)  
 
         # -- v7.0 : panneau de tags ----------------------------------------
         self.tag_panel = TagPanelWidget(self)
@@ -4392,25 +4230,10 @@ class VideoViewer(QMainWindow):
             QPushButton { background-color: #3a2a5a; padding: 7px 14px; }
             QPushButton:hover { background-color: #5a3a8a; }
             QPushButton:disabled { background-color: #333; color: #666; }
-        """)
-
-        self.btn_decrement_count = QPushButton()
-        self.btn_decrement_count.setToolTipDuration(0)
-        self.btn_decrement_count.setToolTip("Réduire le décompte d'une unité")
-        self.btn_decrement_count.clicked.connect(self._on_decrement_count_clicked)
-        self.btn_decrement_count.setStyleSheet("""
-            QPushButton { background-color: #444; padding: 7px 10px; }
-            QPushButton:hover { background-color: #666; }
-            QPushButton:disabled { background-color: #333; color: #666; }
-        """)
-        _icon_dec = self.fa_svg_icon("file-circle-minus", size=16, color="#cccccc")
-        if _icon_dec and not _icon_dec.isNull():
-            self.btn_decrement_count.setIcon(_icon_dec)
-        self.btn_decrement_count.setIconSize(QSize(16, 16))
-        self.btn_decrement_count.setFixedWidth(36)
+        """)     
 
         s1, s1_stretch = make_section(
-            [[self.btn_management_mode, self.btn_tag_selection, self.btn_decrement_count], []],
+            [[self.btn_management_mode, self.btn_tag_selection], []],
             stretch=True
         )
 
@@ -4501,18 +4324,8 @@ class VideoViewer(QMainWindow):
         self.btn_sort_date.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.btn_sort_date.customContextMenuRequested.connect(self.disable_sort_date)
 
-        self.btn_sort_copies = expanding_btn("↕ Copies")
-        self.btn_sort_copies.setToolTip("Trier par nombre de copies\nClic : ↑/↓  |  Clic droit : désactiver")
-        self.btn_sort_copies.setStyleSheet("""
-            QPushButton { background-color: #444; padding: 7px 12px; }
-            QPushButton:hover { background-color: #666; }
-        """)
-        self.btn_sort_copies.clicked.connect(self.cycle_sort_copies)
-        self.btn_sort_copies.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.btn_sort_copies.customContextMenuRequested.connect(self.disable_sort_copies)
-
         s3, s3_stretch = make_section(
-            [[self.btn_sort_date, self.btn_sort_copies], []],
+            [[self.btn_sort_date], []],
             stretch=True
         )
 
@@ -4927,8 +4740,6 @@ class VideoViewer(QMainWindow):
         self.folder_tree.load_folder_tree(folder, ascending)
         if self.explorer_mode == "byfilm":
             self.film_tree.load_films(folder, ascending)
-        elif self.explorer_mode == "usage":
-            self.usage_tree.load_usage(folder)
         self.load_videos_from_path(folder, True, False)
         self.status_bar.set_info(f"Source {lang.upper()} : {os.path.basename(folder)}")
 
@@ -4945,22 +4756,6 @@ class VideoViewer(QMainWindow):
             self.status_bar.set_success(f"Dossier {lang.upper()} défini : {os.path.basename(folder)}")
             if self.config.get("active_source") == lang:
                 self.switch_source(lang)
-
-    # def choose_root_folder(self):
-    #     start_dir = self.current_folder if self.current_folder and os.path.exists(self.current_folder) else os.path.expanduser("~")
-    #     folder = QFileDialog.getExistingDirectory(self, "Choisir le dossier source de vidéos", start_dir)
-    #     if folder:
-    #         self.current_folder = folder
-    #         self.config["last_folder"] = folder
-    #         Config.save(self.config)
-    #         ascending = self.sort_ascending
-    #         self.folder_tree.load_folder_tree(folder, ascending)
-    #         if self.explorer_mode == "byfilm":
-    #             self.film_tree.load_films(folder, ascending)
-    #         elif self.explorer_mode == "usage":
-    #             self.usage_tree.load_usage(folder)
-    #         self.load_videos_from_path(folder, True, False)
-    #         self.status_bar.set_info(f"Dossier source chargé : {os.path.basename(folder)}")
     
     def choose_target_folder(self):
         last_browse = self.config.get("last_target_browse_folder", "") or ""
@@ -5044,11 +4839,7 @@ class VideoViewer(QMainWindow):
                                 raise Exception("Copie annulée")
             
             copy_with_progress(self.current_selected_video, target_path)
-            progress.setValue(100)
-            
-            self._increment_copy_count(self.current_selected_video)
-            print(f"[DEBUG COPIE] Fichier copié : {self.current_selected_video}")                        
-            self._refresh_all_badges()            
+            progress.setValue(100)           
 
             self.status_bar.set_success(f"'{filename}' copié avec succès vers {os.path.basename(self.target_folder)}")
             
@@ -5394,7 +5185,6 @@ class VideoViewer(QMainWindow):
         if not use_lazy:
             for video_path in sorted_files:
                 _append_one(video_path)
-            self._refresh_all_badges()          # ✅ Rafraîchissement unique
             return
 
         # --- Chargement progressif (lazy) ---
@@ -5408,7 +5198,6 @@ class VideoViewer(QMainWindow):
 
         if not remaining:
             self._release_content_height()
-            self._refresh_all_badges()          # ✅ Cas où tout tient dans le premier lot
             return
 
         total = len(sorted_files)
@@ -5434,7 +5223,6 @@ class VideoViewer(QMainWindow):
                 self._lazy_timer.stop()
                 self._lazy_timer = None
                 self._lazy_iter  = None
-                self._refresh_all_badges()      # ✅ Fin du chargement progressif
                 self.status_bar.set_success(
                     f"{total} vidéo{'s' if total > 1 else ''} chargée{'s' if total > 1 else ''}"
                 )
@@ -5517,7 +5305,6 @@ class VideoViewer(QMainWindow):
                 self._lazy_timer.stop()
                 self._lazy_timer = None
                 self._lazy_iter  = None
-                self._refresh_all_badges()
                 self.status_bar.set_success(
                     f"{total} vidéo{'s' if total > 1 else ''} chargée{'s' if total > 1 else ''}"
                 )
@@ -5639,7 +5426,7 @@ class VideoViewer(QMainWindow):
             for i, b in self._explorer_btns.items():
                 b.setStyleSheet(btn_style_active if i == index else btn_style_inactive)
 
-        modes = ["classic", "tags", "byfilm", "usage"]
+        modes = ["classic", "tags", "byfilm"]
         new_mode = modes[index] if index < len(modes) else "classic"
         if new_mode == self.explorer_mode:
             return
@@ -5686,6 +5473,9 @@ class VideoViewer(QMainWindow):
                     self._load_full_catalog_in_background()
 
                 self._refresh_tag_panel()
+                QTimer.singleShot(10, self.tag_panel.repaint)
+                self.tag_panel.repaint()
+                self.tag_panel.update()
 
                 def apply_and_unlock():
                     # Surtout, ne pas appliquer le filtre ici !
@@ -5707,12 +5497,6 @@ class VideoViewer(QMainWindow):
             if self.current_folder:
                 self.film_tree.load_films(self.current_folder, self.sort_ascending)
                 self.status_bar.set_info("Vue par films activée")
-            else:
-                self.status_bar.set_warning("Aucun dossier source chargé")
-        elif new_mode == "usage":
-            if self.current_folder:
-                self.usage_tree.load_usage(self.current_folder)
-                self.status_bar.set_info("Vue Top copies activée")
             else:
                 self.status_bar.set_warning("Aucun dossier source chargé")
 
@@ -5839,9 +5623,6 @@ class VideoViewer(QMainWindow):
         elif self.explorer_mode == "byfilm":
             self.film_tree.load_films(self.current_folder, ascending)
             self.status_bar.set_info("Vue par films rafraîchie")
-        else:
-            self.usage_tree.load_usage(self.current_folder)
-            self.status_bar.set_info("Vue Top copies rafraîchie")
 
     def refresh_after_move(self):
         if self.current_folder and os.path.exists(self.current_folder):
@@ -5861,8 +5642,6 @@ class VideoViewer(QMainWindow):
             self.folder_tree.load_folder_tree(self.current_folder, self.sort_ascending)
         elif self.explorer_mode == "byfilm":
             self.film_tree.load_films(self.current_folder, self.sort_ascending)
-        elif self.explorer_mode == "usage":
-            self.usage_tree.load_usage(self.current_folder)
         elif self.explorer_mode == "tags":
             self._refresh_tag_panel()
 
@@ -5914,51 +5693,6 @@ class VideoViewer(QMainWindow):
             self.status_bar.set_info("Chargement progressif activé (dossiers > 50 fichiers)")
         else:
             self.status_bar.set_info("Chargement progressif désactivé")
-
-    def cycle_sort_copies(self):
-        if self.sort_date_order is not None:
-            self.sort_date_order = None
-            self.btn_sort_date.setText("? Date d'ajout")
-            self.btn_sort_date.setStyleSheet("""
-                QPushButton { background-color: #444; padding: 7px 12px; }
-                QPushButton:hover { background-color: #666; }
-            """)
-        if self.sort_copies_order is None:
-            self.sort_copies_order = "desc"
-            self.btn_sort_copies.setText("↓ Copies")
-            self.btn_sort_copies.setStyleSheet("""
-                QPushButton { background-color: #1a6a8a; padding: 7px 12px; font-weight: bold; }
-                QPushButton:hover { background-color: #2288aa; }
-            """)
-            self.status_bar.set_info("? Tri copies : plus copié en premier")
-        elif self.sort_copies_order == "desc":
-            self.sort_copies_order = "asc"
-            self.btn_sort_copies.setText("↑ Copies")
-            self.btn_sort_copies.setStyleSheet("""
-                QPushButton { background-color: #1a6a8a; padding: 7px 12px; font-weight: bold; }
-                QPushButton:hover { background-color: #2288aa; }
-            """)
-            self.status_bar.set_info("? Tri copies : moins copié en premier")
-        else:
-            self.sort_copies_order = None
-            self.btn_sort_copies.setText("↕ Copies")
-            self.btn_sort_copies.setStyleSheet("""
-                QPushButton { background-color: #444; padding: 7px 12px; }
-                QPushButton:hover { background-color: #666; }
-            """)
-            self.status_bar.set_info("Tri copies désactivé")
-        self.display_videos()
-
-    def disable_sort_copies(self, pos=None):
-        if self.sort_copies_order is not None:
-            self.sort_copies_order = None
-            self.btn_sort_copies.setText("↕ Copies")
-            self.btn_sort_copies.setStyleSheet("""
-                QPushButton { background-color: #444; padding: 7px 12px; }
-                QPushButton:hover { background-color: #666; }
-            """)
-            self.status_bar.set_info("Tri copies désactivé")
-            self.display_videos()
 
     def cycle_sort_date(self):
         if self.sort_copies_order is not None:
@@ -6015,10 +5749,7 @@ class VideoViewer(QMainWindow):
         files = list(self.video_files)
         if self.sort_date_order is not None:
             reverse = (self.sort_date_order == "desc")
-            files = sorted(files, key=lambda p: os.path.getmtime(p), reverse=reverse)
-        elif self.sort_copies_order is not None:
-            reverse = (self.sort_copies_order == "desc")
-            files = sorted(files, key=lambda p: self._get_copy_count(p), reverse=reverse)
+            files = sorted(files, key=lambda p: os.path.getmtime(p), reverse=reverse)        
         return files
 
     def _find_tree_item_by_path(self, target_path, include_subdirs, root_files_only):
@@ -6138,16 +5869,6 @@ class VideoViewer(QMainWindow):
             self.folder_tree.setCurrentItem(item)
             self.folder_tree.scrollToItem(item)
 
-    def _refresh_all_badges(self):
-        """Recalcule le max_count global et met à jour tous les badges visibles."""
-        if not hasattr(self, 'thumbnail_containers'):
-            return
-        max_count = self._compute_global_max_copy_count()
-        for container in self.thumbnail_containers:
-            # Récupère le count actuel depuis le store (au cas où il aurait changé)
-            count = self._get_copy_count(container.video_path)
-            container.badge.update_count(count, max_count)
-            container._reposition_badge()
 
     # -- Historique de normalisation : lookup avec fallback par nom --------
     PRESET_ORDER = {"Standard": 0, "Dynamique": 1, "Percutant": 2}
@@ -6950,20 +6671,6 @@ class VideoViewer(QMainWindow):
         except Exception:
             pass
     
-    def _compute_global_max_copy_count(self):
-        """Retourne le nombre maximal de copies parmi tous les fichiers du store."""
-        ds = self._get_data_store()
-        if not ds:
-            return 0
-        max_count = 0
-        for rel_path, entry in ds._data.items():
-            if rel_path == "_global_tags":
-                continue
-            cnt = entry.get("copy_count", 0)
-            if cnt > max_count:
-                max_count = cnt
-        return max_count
-
     # --- Helpers pour accéder aux métadonnées via le store local ---
     def _get_audio_cache(self, video_path):
         ds = self._get_data_store()
@@ -7001,42 +6708,18 @@ class VideoViewer(QMainWindow):
         if ds:
             ds.clear_norm_history(video_path)
 
-    def _get_copy_count(self, video_path):
-        ds = self._get_data_store()
-        if ds:
-            return ds.get_copy_count(video_path)
-        return 0
-
-    def _increment_copy_count(self, video_path):
-        ds = self._get_data_store()
-        if ds:
-            print(f"\n[DEBUG COPIE] Incrémentation demandée pour : {video_path}")
-            count_before = ds.get_copy_count(video_path)
-            new_count = ds.increment_copy_count(video_path)
-            count_after = ds.get_copy_count(video_path)
-            print(f"  Compteur avant : {count_before}, après : {count_after}")
-            return new_count
-        return 0
-    
-    def _decrement_copy_count(self, video_path):
-        ds = self._get_data_store()
-        if ds:
-            new_count = ds.decrement_copy_count(video_path)
-            return new_count
-        return 0
-    
-    def _on_decrement_count_clicked(self):
-        video_path = self.current_selected_video
-        if not video_path:
-            return
-        self._decrement_copy_count(video_path)
-        self._refresh_all_badges()
-
     def _refresh_tag_panel(self):
         try:
             ds = self._get_data_store()
+            if ds is not None:
+                ds._load()   # recharge le fichier JSON
             if hasattr(self, 'tag_panel'):
-                self.tag_panel.refresh(ds, [])   # Plus de destinations
+                self.tag_panel.refresh(ds, [])
+                # forcer un rafraîchissement immédiat
+                self.tag_panel.update()
+                self.tag_panel.repaint()
+                self.tag_panel._tag_list.update()
+                self.tag_panel._tag_list.repaint()
         except Exception as e:
             import traceback
             QMessageBox.critical(self, "Erreur rafraîchissement panneau tags",

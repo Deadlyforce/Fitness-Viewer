@@ -1,7 +1,7 @@
 {
     "thumbnail_size": 200,
     "preview_resolution": "480x854",
-    "volume": 60,
+    "volume": 40,
     "vertical_mode": true,
     "play_on_hover": false,
     "columns": 6,
@@ -28,6 +28,6 @@
     "folder_fr": "C:/Users/norma/Desktop/Fitness Vid\u00e9os",
     "folder_en": "C:/Users/norma/Desktop/Fitness Vid\u00e9os",
     "active_source": "fr",
-    "window_width": 2092,
-    "window_height": 1345
+    "window_width": 2064,
+    "window_height": 1324
 }
