@@ -5695,13 +5695,6 @@ class VideoViewer(QMainWindow):
             self.status_bar.set_info("Chargement progressif désactivé")
 
     def cycle_sort_date(self):
-        if self.sort_copies_order is not None:
-            self.sort_copies_order = None
-            self.btn_sort_copies.setText("↕ Copies")
-            self.btn_sort_copies.setStyleSheet("""
-                QPushButton { background-color: #444; padding: 7px 12px; }
-                QPushButton:hover { background-color: #666; }
-            """)
         if self.sort_date_order is None:
             self.sort_date_order = "desc"
             self.btn_sort_date.setText("↓ Date d'ajout")
